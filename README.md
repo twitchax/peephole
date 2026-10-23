@@ -6,14 +6,71 @@
 [![Docs](https://docs.rs/peephole/badge.svg)](https://docs.rs/peephole)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-An MCP server that lets an agent see and drive a remote desktop over VNC, including macOS Screen Sharing
+An MCP server that lets an agent see and drive a remote desktop over VNC: take screenshots, click,
+drag, scroll, type and press key combos. It works with any VNC server, and with macOS Screen Sharing
+using the Mac's own username and password (Apple's login, RFB security type 30), so the legacy
+8-character VNC password can stay off.
 
 ## Usage
 
 ```text
-$ peephole --help
-TODO: paste the real `--help` output once the CLI settles.
+$ peephole -h
+An MCP server that lets an agent see and drive a remote desktop over VNC, including macOS Screen Sharing
+
+Usage: peephole [OPTIONS] --host <HOST>
+
+Options:
+      --host <HOST>                    The VNC server's host name or address [env: PEEPHOLE_HOST=]
+      --port <PORT>                    The VNC server's port [env: PEEPHOLE_PORT=] [default: 5900]
+      --password-file <PASSWORD_FILE>  Read the password from this file (trailing newlines ignored) instead of `PEEPHOLE_PASSWORD` [env: PEEPHOLE_PASSWORD_FILE=]
+      --view-only                      Disable every input tool, leaving `screenshot`, `screen_info` and `wait_for_change` [env: PEEPHOLE_VIEW_ONLY=]
+      --max-edge <MAX_EDGE>            The long edge of screen space (and of a default screenshot), in pixels [env: PEEPHOLE_MAX_EDGE=] [default: 1568]
+  -h, --help                           Print help (see more with '--help')
+  -V, --version                        Print version
 ```
+
+### With Claude Code
+
+```bash
+# A Mac: its login name, with the password in a file only you can read.
+claude mcp add peephole -e PEEPHOLE_USER=<mac-user> -- peephole --host <host> --password-file <path>
+
+# Any VNC server with a VNC password.
+claude mcp add peephole -e PEEPHOLE_PASSWORD=<vnc-password> -- peephole --host <host>
+```
+
+Credentials come only from `PEEPHOLE_USER`, `PEEPHOLE_PASSWORD` or `--password-file`, never from
+arguments, and never appear in logs or tool output. `claude mcp add -e` stores the variable in
+your Claude Code config, so prefer `--password-file` (mode `600`) for a real password.
+
+On the Mac, turn on **System Settings › General › Sharing › Screen Sharing** and allow the user
+you log in as. peephole picks Apple's login when `PEEPHOLE_USER` and a password are set, the VNC
+password when only a password is set, and no authentication when the server offers none.
+
+### Tools
+
+| Tool | What it does |
+|---|---|
+| `screenshot { region?, max_edge? }` | A PNG of the screen, or a zoom into `region`. The text part says how image pixels map to screen space and flags a black frame. |
+| `click { x, y, button?, count? }` | Click (left, middle or right; double and triple with `count`). |
+| `move { x, y }` | Move the pointer without clicking. |
+| `drag { from, to, button? }` | Press, move in steps, release. |
+| `scroll { x, y, dx?, dy? }` | Wheel notches: `dy` down (negative up), `dx` right (negative left). |
+| `type_text { text }` | Type text; `\n` is Return and `\t` is Tab. |
+| `key { combo }` | `enter`, `esc`, `cmd+shift+g`, `ctrl+alt+delete`, `f5`, `cmd++`. `cmd` is Command on a Mac. |
+| `screen_info` | Connection state, framebuffer size, screen space and scale. |
+| `wait_for_change { region?, timeout_ms? }` | Wait for the screen (or a region) to change instead of polling. |
+
+`--view-only` removes every input tool.
+
+**Screen space.** Coordinates are in screen space: the framebuffer scaled so its long edge is
+`--max-edge` (1,568 px by default; a 3456x2234 Retina frame becomes 1568x1014). A default
+screenshot *is* screen space, so its pixel coordinates can be clicked directly. A `region`
+screenshot zooms in, up to the framebuffer's own resolution, without changing screen space.
+
+**Security.** Apple's login and VNC authentication protect the credentials, not the session:
+screen contents and keystrokes cross the network unencrypted, as with any plain VNC client. Use
+peephole on a network you trust, or through a tunnel (SSH, WireGuard).
 
 ## Install
 

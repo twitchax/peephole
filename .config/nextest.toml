@@ -16,3 +16,9 @@ serial-e2e = { max-threads = 1 }
 filter = 'test(/^e2e_/)'
 test-group = 'serial-e2e'
 retries = 2
+
+# The wire tests bind loopback listeners and run a VNC server each; serialize them with the e2e
+# tests for the same oversubscription reason. No retries: nothing here has flaked.
+[[profile.default.overrides]]
+filter = 'binary(rfb)'
+test-group = 'serial-e2e'

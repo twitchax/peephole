@@ -9,8 +9,24 @@ defer to `~/CLAUDE.md`.**
 ## Architecture
 
 One package: a library (`peephole`) and a thin binary (`peephole`, `src/bin.rs`) behind the
-default `cli` feature. The binary parses arguments and calls the library; everything testable
-lives in the library. `base` holds the error aliases; `tests` is the shared fixture factory.
+default `cli` feature. The binary parses arguments and calls `mcp::serve`. `base` holds the error
+aliases; `tests` is the shared fixture factory.
+
+- `rfb/`: our own RFB client (handshake, `auth` math, `decode`), generic over `AsyncRead + AsyncWrite`.
+  We request `PixelFormat::RGBX` (libvncclient's little-endian default), so pixels arrive in
+  storage order. Apple's `003.889` is answered as 3.8, as libvncclient does.
+- `session`: one background connection. The reader paints whole updates under the framebuffer
+  lock and never holds it across a network read. An `AuthError` stops the session for good:
+  retrying a wrong password could lock the Mac account.
+- `screenshot`: screen space (the framebuffer scaled to `--max-edge`). Every tool coordinate is in
+  screen space; a region screenshot zooms without changing it.
+- `mcp`: the rmcp tools. `#[tool_handler(router = self.tool_router)]` is load-bearing: the macro's
+  default rebuilds the router per call and would restore the input tools `--view-only` removed.
+- `credentials`: env or file only, `Secret` redacts and zeroizes. Tests assert no password in any
+  output, at trace level.
+- Tests: `tests/rfb.rs` and `tests/e2e.rs` run against rustvncserver through
+  `tests/support` (read its header for two upstream bugs that shape coverage); `tests/ard.rs` mocks
+  Apple's type-30 server.
 
 ## Commands
 
