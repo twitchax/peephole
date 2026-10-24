@@ -17,3 +17,5 @@ why the version moved the way it did.
   retrying.
 - Credentials from `PEEPHOLE_USER`, `PEEPHOLE_PASSWORD` or `--password-file` only, never logged.
 - `--view-only`, which removes every input tool.
+- `wait_for_change` waits for the screen to settle after a change (`settle_ms`, 300 by default),
+  so a menu that highlights before it draws is seen whole.

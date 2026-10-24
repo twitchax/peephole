@@ -59,7 +59,7 @@ password when only a password is set, and no authentication when the server offe
 | `type_text { text }` | Type text; `\n` is Return and `\t` is Tab. |
 | `key { combo }` | `enter`, `esc`, `cmd+shift+g`, `ctrl+alt+delete`, `f5`, `cmd++`. `cmd` is Command on a Mac. |
 | `screen_info` | Connection state, framebuffer size, screen space and scale. |
-| `wait_for_change { region?, timeout_ms? }` | Wait for the screen (or a region) to change instead of polling. |
+| `wait_for_change { region?, timeout_ms?, settle_ms? }` | Wait for the screen (or a region) to change and then hold still for `settle_ms` (300 by default; 0 returns at the first change), instead of polling. |
 
 `--view-only` removes every input tool.
 

@@ -89,6 +89,17 @@ impl fmt::Display for State {
     }
 }
 
+/// What [`Session::wait_for_change`] saw, timed from the start of the wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Change {
+    /// Nothing changed before the timeout.
+    None,
+    /// The region changed, and its last change was followed by the full settle period.
+    Settled { first: Duration, last: Duration },
+    /// The region was still changing when the timeout came.
+    Unsettled { first: Duration },
+}
+
 /// Sends input to the server. Only a session that is not view-only has one.
 #[derive(Debug, Clone)]
 pub struct Input {
@@ -201,23 +212,46 @@ impl Session {
         }
     }
 
-    /// Waits up to `wait` for any pixel in `area` to change. Returns whether one did.
+    /// Waits up to `wait` for a pixel in `area` to change, then until `area` has been still for
+    /// `settle`, so the caller sees a finished frame rather than the first step of an animation
+    /// (a menu bar item highlights before its menu draws). A zero `settle` returns at the first
+    /// change.
     ///
     /// # Errors
     ///
     /// When `area` lies outside the framebuffer, or the session stops.
-    pub async fn wait_for_change(&self, area: Rect, wait: Duration) -> Res<bool> {
-        let deadline = Instant::now() + wait;
+    pub async fn wait_for_change(&self, area: Rect, wait: Duration, settle: Duration) -> Res<Change> {
+        let start = Instant::now();
+        let deadline = start + wait;
         let mut frames = self.frames.clone();
         // Mark the current frame seen before taking the baseline, so no frame slips between.
         frames.borrow_and_update();
-        let baseline = self.framebuffer().crop(&area)?;
+        let mut last = self.framebuffer().crop(&area)?;
+        // When the region first and most recently changed.
+        let mut changes: Option<(Instant, Instant)> = None;
         loop {
-            match timeout_at(deadline, frames.changed()).await {
-                Err(_) => return Ok(false),
+            let until = changes.map_or(deadline, |(_, latest)| (latest + settle).min(deadline));
+            match timeout_at(until, frames.changed()).await {
                 Ok(Err(_)) => bail!("the session has stopped"),
-                Ok(Ok(())) if !self.framebuffer().matches(&area, &baseline) => return Ok(true),
-                Ok(Ok(())) => {}
+                Ok(Ok(())) => {
+                    let fb = self.framebuffer();
+                    if !fb.matches(&area, &last) {
+                        // After a resize the region may not fit; an empty baseline never matches.
+                        last = fb.crop(&area).unwrap_or_default();
+                        let now = Instant::now();
+                        changes = Some(changes.map_or((now, now), |(first, _)| (first, now)));
+                    }
+                }
+                Err(_) => {
+                    return Ok(match changes {
+                        None => Change::None,
+                        Some((first, latest)) if Instant::now() >= latest + settle => Change::Settled {
+                            first: first - start,
+                            last: latest - start,
+                        },
+                        Some((first, _)) => Change::Unsettled { first: first - start },
+                    });
+                }
             }
         }
     }

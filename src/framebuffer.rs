@@ -173,10 +173,11 @@ impl Framebuffer {
     }
 
     /// Whether `rect` still holds exactly `pixels` (as returned by [`Framebuffer::crop`]). A
-    /// rectangle that no longer fits, after a resize, has changed.
+    /// rectangle that no longer fits, after a resize, has changed, and so has one compared with a
+    /// baseline of the wrong size.
     #[must_use]
     pub fn matches(&self, rect: &Rect, pixels: &[u8]) -> bool {
-        if self.check(rect).is_err() {
+        if self.check(rect).is_err() || pixels.len() != rect.area() * BYTES_PER_PIXEL {
             return false;
         }
         let row_len = usize::from(rect.width) * BYTES_PER_PIXEL;
@@ -249,6 +250,15 @@ mod unit {
         fb.fill(&Rect::new(2, 2, 1, 1), [255, 0, 0]).unwrap();
         assert!(!fb.matches(&rect, &baseline));
         assert!(!Framebuffer::new(1, 1).matches(&rect, &baseline), "a rectangle that no longer fits has changed");
+    }
+
+    #[test]
+    fn a_baseline_of_the_wrong_size_never_matches() {
+        let fb = numbered();
+        let rect = Rect::new(1, 1, 2, 2);
+        let baseline = fb.crop(&rect).unwrap();
+        assert!(!fb.matches(&rect, &[]));
+        assert!(!fb.matches(&rect, &baseline[..6]));
     }
 
     #[test]

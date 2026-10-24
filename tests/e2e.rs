@@ -216,8 +216,30 @@ async fn e2e_input_coordinates_are_in_screen_space() {
     app.finish().await;
 }
 
+/// Runs `call` while the server shows `changes` new frames, one every 100 ms, then goes still.
+async fn while_animating(server: &TestServer, call: impl Future<Output = CallToolResult>, changes: u8) -> CallToolResult {
+    tokio::pin!(call);
+    let mut ticker = tokio::time::interval(Duration::from_millis(100));
+    let mut shown = 0u8;
+    loop {
+        tokio::select! {
+            result = &mut call => return result,
+            _ = ticker.tick(), if shown < changes => {
+                shown += 1;
+                server.show(&vec![shown; usize::from(WIDTH) * usize::from(HEIGHT) * 3]).await;
+            }
+        }
+    }
+}
+
+/// The number before " ms" that follows `label` in `text`.
+fn ms_after(text: &str, label: &str) -> u64 {
+    let rest = &text[text.find(label).unwrap_or_else(|| panic!("{label:?} in {text:?}")) + label.len()..];
+    rest.trim_start().split(' ').next().unwrap().parse().unwrap()
+}
+
 #[tokio::test]
-async fn e2e_wait_for_change_sees_the_screen_change() {
+async fn e2e_wait_for_change_returns_at_the_first_change_without_settling() {
     let server = TestServer::start(WIDTH, HEIGHT, None).await;
     server.show(&pattern_rgb(WIDTH, HEIGHT)).await;
     let app = peephole(server.addr, &[], &[]).await;
@@ -226,20 +248,37 @@ async fn e2e_wait_for_change_sees_the_screen_change() {
     let quiet = app.ok("wait_for_change", json!({"timeout_ms": 300})).await;
     assert!(text(&quiet).starts_with("no change"), "{}", text(&quiet));
 
-    // Keep changing the screen until the wait returns, so the test cannot race the wait's start.
-    let result = {
-        let waiting = app.call("wait_for_change", json!({"timeout_ms": 20_000}));
-        tokio::pin!(waiting);
-        let mut frame = 0u8;
-        loop {
-            frame = frame.wrapping_add(1);
-            server.show(&vec![frame; usize::from(WIDTH) * usize::from(HEIGHT) * 3]).await;
-            if let Ok(result) = timeout(Duration::from_millis(200), &mut waiting).await {
-                break result;
-            }
-        }
-    };
-    assert!(text(&result).starts_with("changed after"), "{}", text(&result));
+    // The screen changes for 20 s; with settle_ms 0 the wait returns at the first change.
+    let result = while_animating(&server, app.call("wait_for_change", json!({"timeout_ms": 20_000, "settle_ms": 0})), 200).await;
+    assert!(ms_after(&text(&result), "changed after") < 5_000, "{}", text(&result));
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn e2e_wait_for_change_waits_for_the_screen_to_settle() {
+    let server = TestServer::start(WIDTH, HEIGHT, None).await;
+    server.show(&pattern_rgb(WIDTH, HEIGHT)).await;
+    let app = peephole(server.addr, &[], &[]).await;
+    app.ok("screenshot", json!({})).await;
+
+    // Eight frames over 0.8 s, like an animation, then stillness.
+    let result = while_animating(&server, app.call("wait_for_change", json!({"timeout_ms": 20_000})), 8).await;
+
+    let result = text(&result);
+    assert!(ms_after(&result, "settled after") >= 400, "the wait must outlast the animation: {result}");
+    assert!(ms_after(&result, "changed after") <= ms_after(&result, "settled after"), "{result}");
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn e2e_wait_for_change_reports_a_screen_that_never_settles() {
+    let server = TestServer::start(WIDTH, HEIGHT, None).await;
+    let app = peephole(server.addr, &[], &[]).await;
+    app.ok("screenshot", json!({})).await;
+
+    let result = while_animating(&server, app.call("wait_for_change", json!({"timeout_ms": 1_000})), 40).await;
+
+    assert!(text(&result).contains("still changing"), "{}", text(&result));
     app.finish().await;
 }
 

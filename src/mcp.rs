@@ -15,14 +15,14 @@ use rmcp::{
     schemars, tool, tool_handler, tool_router,
 };
 use serde::Deserialize;
-use tokio::time::{Instant, sleep};
+use tokio::time::sleep;
 
 use crate::base::{Res, Void};
 use crate::framebuffer::Framebuffer;
 use crate::keys::{Combo, Stroke, text_strokes};
 use crate::rfb::proto::{buttons, security};
 use crate::screenshot::{Region, ScreenSpace, Shot, render};
-use crate::session::{Input, Session, SessionConfig, State};
+use crate::session::{Change, Input, Session, SessionConfig, State};
 
 /// The tools that send input; `--view-only` removes them.
 pub const INPUT_TOOLS: [&str; 6] = ["click", "move", "drag", "scroll", "type_text", "key"];
@@ -42,6 +42,10 @@ const MAX_TEXT: usize = 10_000;
 const MAX_SCROLL: u32 = 100;
 const DEFAULT_WAIT_MS: u64 = 5_000;
 const MAX_WAIT_MS: u64 = 60_000;
+/// Longer than the session's 100 ms update pacing, so "still" means several quiet updates, and
+/// about as long as a macOS menu or sheet animation.
+const DEFAULT_SETTLE_MS: u64 = 300;
+const MAX_SETTLE_MS: u64 = 5_000;
 const MAX_EDGE_RANGE: std::ops::RangeInclusive<u32> = 16..=8192;
 
 const INSTRUCTIONS: &str = "peephole sees and drives a remote desktop over VNC. \
@@ -150,6 +154,9 @@ pub struct WaitParams {
     pub region: Option<RegionParam>,
     /// How long to wait, in milliseconds (default 5000, at most 60000).
     pub timeout_ms: Option<u64>,
+    /// After a change, how long the screen must stay still before returning, in milliseconds
+    /// (default 300; 0 returns at the first change).
+    pub settle_ms: Option<u64>,
 }
 
 /// The MCP server.
@@ -194,8 +201,8 @@ impl Peephole {
         self.screen_info_impl()
     }
 
-    #[tool(description = "Wait until the screen (or a region of it) changes, instead of polling screenshots. \
-        Returns whether anything changed before the timeout.")]
+    #[tool(description = "Wait until the screen (or a region of it) changes and then settles, instead of polling screenshots. \
+        Returns when the change happened and when it settled, or that nothing changed before the timeout.")]
     async fn wait_for_change(&self, Parameters(params): Parameters<WaitParams>) -> CallToolResult {
         reply(self.wait_impl(params).await)
     }
@@ -297,13 +304,14 @@ impl Peephole {
                 None => fb.bounds(),
             }
         };
-        let start = Instant::now();
-        let changed = self.session.wait_for_change(area, Duration::from_millis(timeout_ms)).await?;
-        if changed {
-            Ok(done(format!("changed after {} ms", start.elapsed().as_millis())))
-        } else {
-            Ok(done(format!("no change within {timeout_ms} ms")))
-        }
+        let settle_ms = params.settle_ms.unwrap_or(DEFAULT_SETTLE_MS).min(MAX_SETTLE_MS);
+        let change = self.session.wait_for_change(area, Duration::from_millis(timeout_ms), Duration::from_millis(settle_ms)).await?;
+        Ok(done(match change {
+            Change::None => format!("no change within {timeout_ms} ms"),
+            Change::Settled { first, .. } if settle_ms == 0 => format!("changed after {} ms", first.as_millis()),
+            Change::Settled { first, last } => format!("changed after {} ms and settled after {} ms", first.as_millis(), last.as_millis()),
+            Change::Unsettled { first } => format!("changed after {} ms and was still changing at the {timeout_ms} ms timeout", first.as_millis()),
+        }))
     }
 
     async fn click_impl(&self, params: ClickParams) -> Res<CallToolResult> {
