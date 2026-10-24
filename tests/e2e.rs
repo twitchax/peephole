@@ -10,6 +10,7 @@ use std::{collections::BTreeSet, net::SocketAddr, process::Stdio, time::Duration
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use peephole::{
+    framebuffer::Rect,
     keys::keysym,
     rfb::proto::buttons::{LEFT, WHEEL_DOWN},
     tests::pattern_rgb,
@@ -22,7 +23,10 @@ use rmcp::{
     transport::TokioChildProcess,
 };
 use serde_json::{Value, json};
-use support::{Input, TestServer, WAIT};
+use support::{
+    Input, TestServer, WAIT,
+    stalling::{HIGHLIGHT_RGB, MENU_RGB, StallingServer},
+};
 use tempfile::TempDir;
 use tokio::{
     io::{AsyncReadExt as _, BufReader},
@@ -279,6 +283,58 @@ async fn e2e_wait_for_change_reports_a_screen_that_never_settles() {
     let result = while_animating(&server, app.call("wait_for_change", json!({"timeout_ms": 1_000})), 40).await;
 
     assert!(text(&result).contains("still changing"), "{}", text(&result));
+    app.finish().await;
+}
+
+fn pixel((width, _, pixels): &(u32, u32, Vec<u8>), x: u32, y: u32) -> [u8; 3] {
+    let at = usize::try_from((y * width + x) * 3).unwrap();
+    pixels[at..at + 3].try_into().unwrap()
+}
+
+#[tokio::test]
+async fn e2e_a_screenshot_after_input_fetches_fresh_pixels() {
+    let server = StallingServer::start(WIDTH, HEIGHT, pattern_rgb(WIDTH, HEIGHT)).await;
+    let app = peephole(server.addr, &[], &[]).await;
+    let full = Rect::new(0, 0, WIDTH, HEIGHT);
+
+    app.ok("screenshot", json!({})).await;
+    assert_eq!(server.fetches(), [full], "with no input yet, the cache is current");
+
+    // The click opens a menu that incremental updates never bring.
+    app.ok("click", json!({"x": 40, "y": 4})).await;
+    let zoom = image(&app.ok("screenshot", json!({"region": {"x": 0, "y": 0, "width": 96, "height": 80}})).await);
+    assert_eq!(pixel(&zoom, 40, 40), MENU_RGB);
+    let shot = image(&app.ok("screenshot", json!({})).await);
+    assert_eq!(pixel(&shot, 40, 40), MENU_RGB);
+    app.ok("screenshot", json!({})).await;
+
+    assert_eq!(
+        server.fetches(),
+        [full, Rect::new(0, 0, 96, 80), full],
+        "a region fetches just itself; the whole frame is fetched once per input"
+    );
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn e2e_wait_for_change_after_input_checks_the_settle_against_fresh_pixels() {
+    let server = StallingServer::start(WIDTH, HEIGHT, pattern_rgb(WIDTH, HEIGHT)).await;
+    let app = peephole(server.addr, &[], &[]).await;
+    app.ok("screenshot", json!({})).await;
+
+    app.ok("click", json!({"x": 40, "y": 4})).await;
+    let waited = text(&app.ok("wait_for_change", json!({"timeout_ms": 20_000})).await);
+    assert!(waited.contains("settled after"), "{waited}");
+
+    // The highlight bands go quiet with the menu still held back: one fresh copy finds the menu,
+    // and a second confirms it has stopped changing.
+    let full = Rect::new(0, 0, WIDTH, HEIGHT);
+    assert_eq!(server.fetches(), [full, full, full], "{waited}");
+    // That copy is the cache now, so the screenshot fetches nothing.
+    let shot = image(&app.ok("screenshot", json!({})).await);
+    assert_eq!(pixel(&shot, 40, 40), MENU_RGB);
+    assert_eq!(pixel(&shot, 70, 4), HIGHLIGHT_RGB);
+    assert_eq!(server.fetches().len(), 3);
     app.finish().await;
 }
 

@@ -19,3 +19,6 @@ why the version moved the way it did.
 - `--view-only`, which removes every input tool.
 - `wait_for_change` waits for the screen to settle after a change (`settle_ms`, 300 by default),
   so a menu that highlights before it draws is seen whole.
+- After input, the next `screenshot` fetches its area fresh, and `wait_for_change` confirms a
+  settle against fresh pixels: macOS Screen Sharing holds an open menu back from its incremental
+  updates.

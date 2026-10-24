@@ -1,5 +1,6 @@
 //! The long-lived connection. One background task dials the server, runs the handshake, and keeps
-//! the local framebuffer current; tools read that cache and never wait on the network for pixels.
+//! the local framebuffer current; tools read that cache rather than wait on the network for
+//! pixels, except for the first look after our own input (see [`Session::freshen`]).
 //!
 //! Per connection, a reader applies each `FramebufferUpdate` atomically and bumps a frame counter,
 //! and a writer sends input and keeps one incremental update request outstanding (paced, so a
@@ -9,7 +10,10 @@
 use std::{
     convert::Infallible,
     fmt,
-    sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    sync::{
+        Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -20,7 +24,7 @@ use tokio::{
         TcpStream,
         tcp::{OwnedReadHalf, OwnedWriteHalf},
     },
-    sync::{mpsc, watch},
+    sync::{mpsc, oneshot, watch},
     task::JoinHandle,
     time::{Instant, sleep_until, timeout, timeout_at},
 };
@@ -100,10 +104,26 @@ pub enum Change {
     Unsettled { first: Duration },
 }
 
+/// What tools queue for the writer. One queue keeps a refresh behind the input it follows.
+#[derive(Debug)]
+enum Outgoing {
+    Message(ClientMessage),
+    Refresh(Refresh),
+}
+
+/// A request for `area` outright. `done` fires once an update that covers it has landed.
+#[derive(Debug)]
+struct Refresh {
+    area: Rect,
+    done: oneshot::Sender<()>,
+}
+
 /// Sends input to the server. Only a session that is not view-only has one.
 #[derive(Debug, Clone)]
 pub struct Input {
-    tx: mpsc::Sender<ClientMessage>,
+    tx: mpsc::Sender<Outgoing>,
+    /// Input messages queued so far.
+    sent: Arc<AtomicU64>,
 }
 
 impl Input {
@@ -126,7 +146,12 @@ impl Input {
     }
 
     async fn send(&self, message: ClientMessage) -> Void {
-        self.tx.send(message).await.map_err(|_| anyhow!("the session has stopped"))
+        self.sent.fetch_add(1, Ordering::AcqRel);
+        self.queue(Outgoing::Message(message)).await
+    }
+
+    async fn queue(&self, outgoing: Outgoing) -> Void {
+        self.tx.send(outgoing).await.map_err(|_| anyhow!("the session has stopped"))
     }
 }
 
@@ -136,6 +161,8 @@ pub struct Session {
     frames: watch::Receiver<u64>,
     state: watch::Receiver<State>,
     input: Option<Input>,
+    /// `Input::sent` as of the last refresh of the whole frame.
+    fresh: AtomicU64,
     task: JoinHandle<()>,
 }
 
@@ -156,15 +183,23 @@ impl Session {
             (None, None)
         } else {
             let (tx, rx) = mpsc::channel(256);
-            (Some(Input { tx }), Some(rx))
+            (Some(Input { tx, sent: Arc::default() }), Some(rx))
         };
         let shared = Shared {
             framebuffer: framebuffer.clone(),
             frames: frames_tx,
             state: state_tx,
+            refreshes: Mutex::default(),
         };
         let task = tokio::spawn(run(config, shared, input_rx));
-        Self { framebuffer, frames, state, input, task }
+        Self {
+            framebuffer,
+            frames,
+            state,
+            input,
+            fresh: AtomicU64::new(0),
+            task,
+        }
     }
 
     #[must_use]
@@ -212,10 +247,49 @@ impl Session {
         }
     }
 
+    /// Makes sure `area` of the cache is no older than our last input, waiting up to `wait`.
+    ///
+    /// The incremental stream can lag well behind the screen: while a menu is open, macOS Screen
+    /// Sharing sends a thin band of it about once a second and the rest only once the menu
+    /// closes. So when input has gone out since the whole frame was last refreshed, `area` is
+    /// requested outright, which the server answers from a fresh capture. Returns false when that
+    /// did not land in time, leaving the cached pixels.
+    ///
+    /// # Errors
+    ///
+    /// When the session stops.
+    pub async fn freshen(&self, area: Rect, wait: Duration) -> Res<bool> {
+        match self.stale_input() {
+            Some(input) => self.refresh(input, area, wait).await,
+            None => Ok(true),
+        }
+    }
+
+    /// The input channel, when input has gone out since the whole frame was last refreshed.
+    fn stale_input(&self) -> Option<&Input> {
+        self.input.as_ref().filter(|input| input.sent.load(Ordering::Acquire) > self.fresh.load(Ordering::Acquire))
+    }
+
+    /// Requests `area` outright, after any input already queued, and waits up to `wait` for it.
+    async fn refresh(&self, input: &Input, area: Rect, wait: Duration) -> Res<bool> {
+        let sent = input.sent.load(Ordering::Acquire);
+        let (done, landed) = oneshot::channel();
+        input.queue(Outgoing::Refresh(Refresh { area, done })).await?;
+        let landed = matches!(timeout(wait, landed).await, Ok(Ok(())));
+        if landed && area == self.framebuffer().bounds() {
+            self.fresh.fetch_max(sent, Ordering::AcqRel);
+        }
+        Ok(landed)
+    }
+
     /// Waits up to `wait` for a pixel in `area` to change, then until `area` has been still for
     /// `settle`, so the caller sees a finished frame rather than the first step of an animation
     /// (a menu bar item highlights before its menu draws). A zero `settle` returns at the first
     /// change.
+    ///
+    /// After our own input, a quiet spell may only mean the server is holding pixels back (see
+    /// [`Self::freshen`]), so each apparent settle is checked against a fresh copy of `area`
+    /// before it is reported.
     ///
     /// # Errors
     ///
@@ -223,12 +297,15 @@ impl Session {
     pub async fn wait_for_change(&self, area: Rect, wait: Duration, settle: Duration) -> Res<Change> {
         let start = Instant::now();
         let deadline = start + wait;
+        let verify = self.stale_input().filter(|_| !settle.is_zero());
         let mut frames = self.frames.clone();
         // Mark the current frame seen before taking the baseline, so no frame slips between.
         frames.borrow_and_update();
         let mut last = self.framebuffer().crop(&area)?;
-        // When the region first and most recently changed.
+        // When the region first and most recently changed, and whether a fresh copy has confirmed
+        // the latest change is the last.
         let mut changes: Option<(Instant, Instant)> = None;
+        let mut verified = false;
         loop {
             let until = changes.map_or(deadline, |(_, latest)| (latest + settle).min(deadline));
             match timeout_at(until, frames.changed()).await {
@@ -240,12 +317,23 @@ impl Session {
                         last = fb.crop(&area).unwrap_or_default();
                         let now = Instant::now();
                         changes = Some(changes.map_or((now, now), |(first, _)| (first, now)));
+                        verified = false;
                     }
                 }
                 Err(_) => {
+                    let now = Instant::now();
+                    if let (Some(input), Some(_)) = (verify, changes)
+                        && !verified
+                        && now < deadline
+                    {
+                        // The refreshed frame bumps `frames`, so the loop compares it like any other.
+                        verified = true;
+                        self.refresh(input, area, deadline - now).await?;
+                        continue;
+                    }
                     return Ok(match changes {
                         None => Change::None,
-                        Some((first, latest)) if Instant::now() >= latest + settle => Change::Settled {
+                        Some((first, latest)) if now >= latest + settle => Change::Settled {
                             first: first - start,
                             last: latest - start,
                         },
@@ -262,6 +350,8 @@ struct Shared {
     framebuffer: Arc<RwLock<Framebuffer>>,
     frames: watch::Sender<u64>,
     state: watch::Sender<State>,
+    /// Refreshes on the wire, waiting for an update that covers them.
+    refreshes: Mutex<Vec<Refresh>>,
 }
 
 /// A poisoned lock means a reader panicked mid-paint; the pixels are still pixels, so carry on.
@@ -278,7 +368,7 @@ fn backoff(failures: u32) -> Duration {
     (Duration::from_millis(500) * 2u32.saturating_pow(failures.min(6))).min(MAX_BACKOFF)
 }
 
-async fn run(config: SessionConfig, shared: Shared, mut input: Option<mpsc::Receiver<ClientMessage>>) {
+async fn run(config: SessionConfig, shared: Shared, mut input: Option<mpsc::Receiver<Outgoing>>) {
     let mut failures = 0;
     loop {
         shared.state.send_replace(State::Connecting);
@@ -300,7 +390,7 @@ async fn run(config: SessionConfig, shared: Shared, mut input: Option<mpsc::Rece
         shared.state.send_replace(State::Retrying { error: message, retry_in });
 
         // Drop input sent while disconnected: replaying a stale click after reconnecting could
-        // land on whatever is on screen by then.
+        // land on whatever is on screen by then. A dropped refresh tells its waiter it failed.
         let deadline = Instant::now() + retry_in;
         loop {
             tokio::select! {
@@ -311,18 +401,18 @@ async fn run(config: SessionConfig, shared: Shared, mut input: Option<mpsc::Rece
     }
 }
 
-/// The next queued input. Never resolves for a view-only session.
-async fn next_input(input: &mut Option<mpsc::Receiver<ClientMessage>>) -> ClientMessage {
+/// The next queued input or refresh. Never resolves for a view-only session.
+async fn next_input(input: &mut Option<mpsc::Receiver<Outgoing>>) -> Outgoing {
     if let Some(rx) = input
-        && let Some(message) = rx.recv().await
+        && let Some(outgoing) = rx.recv().await
     {
-        return message;
+        return outgoing;
     }
     std::future::pending().await
 }
 
 /// One connection, from dial to failure.
-async fn connection(config: &SessionConfig, shared: &Shared, input: &mut Option<mpsc::Receiver<ClientMessage>>, connected: &mut bool) -> Res<Infallible> {
+async fn connection(config: &SessionConfig, shared: &Shared, input: &mut Option<mpsc::Receiver<Outgoing>>, connected: &mut bool) -> Res<Infallible> {
     let (host, port) = (config.host.as_str(), config.port);
     let mut tcp = timeout(CONNECT_TIMEOUT, TcpStream::connect((host, port)))
         .await
@@ -362,7 +452,7 @@ async fn connection(config: &SessionConfig, shared: &Shared, input: &mut Option<
     let mut rd = BufReader::with_capacity(READ_BUFFER, rd);
     tokio::select! {
         result = read_loop(&mut rd, shared, desktop, &updated_tx, connected) => result,
-        result = write_loop(&mut wr, input, updated_rx) => result,
+        result = write_loop(&mut wr, shared, input, updated_rx) => result,
     }
 }
 
@@ -389,6 +479,13 @@ async fn read_loop(rd: &mut BufReader<OwnedReadHalf>, shared: &Shared, desktop: 
             (applied, fb.width(), fb.height())
         };
         shared.frames.send_modify(|frame| *frame += 1);
+        {
+            let mut refreshes = shared.refreshes.lock().unwrap_or_else(PoisonError::into_inner);
+            for refresh in refreshes.extract_if(.., |r| r.done.is_closed() || r.area.is_covered_by(&applied.damage)) {
+                // A waiter that has given up is fine.
+                let _ = refresh.done.send(());
+            }
+        }
         if !*connected {
             *connected = true;
             shared.state.send_replace(State::Connected(desktop.clone()));
@@ -397,7 +494,7 @@ async fn read_loop(rd: &mut BufReader<OwnedReadHalf>, shared: &Shared, desktop: 
     }
 }
 
-async fn write_loop(wr: &mut OwnedWriteHalf, input: &mut Option<mpsc::Receiver<ClientMessage>>, mut updated: mpsc::UnboundedReceiver<Updated>) -> Res<Infallible> {
+async fn write_loop(wr: &mut OwnedWriteHalf, shared: &Shared, input: &mut Option<mpsc::Receiver<Outgoing>>, mut updated: mpsc::UnboundedReceiver<Updated>) -> Res<Infallible> {
     let mut out = Vec::with_capacity(64);
     let mut request: Option<ClientMessage> = None;
     let mut next_request = Instant::now();
@@ -413,7 +510,16 @@ async fn write_loop(wr: &mut OwnedWriteHalf, input: &mut Option<mpsc::Receiver<C
                 });
                 continue;
             }
-            message = next_input(input) => message.encode(&mut out),
+            outgoing = next_input(input) => match outgoing {
+                Outgoing::Message(message) => message.encode(&mut out),
+                Outgoing::Refresh(refresh) => {
+                    // A non-incremental request makes the server send the whole area. An update
+                    // already in flight that happens to cover it also counts: a one-round-trip
+                    // window, and RFB has no way to tell the two apart without the Fence extension.
+                    ClientMessage::UpdateRequest { incremental: false, area: refresh.area }.encode(&mut out);
+                    shared.refreshes.lock().unwrap_or_else(PoisonError::into_inner).push(refresh);
+                }
+            },
             () = sleep_until(next_request), if request.is_some() => {
                 if let Some(message) = request.take() {
                     message.encode(&mut out);

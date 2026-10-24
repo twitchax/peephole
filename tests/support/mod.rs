@@ -1,4 +1,5 @@
-//! A real RFB server for wire-level tests: `rustvncserver`, reachable on a loopback port.
+//! A real RFB server for wire-level tests: `rustvncserver`, reachable on a loopback port. For
+//! behaviour rustvncserver cannot show (a server that holds pixels back), see [`stalling`].
 //!
 //! rustvncserver can only listen on `0.0.0.0:<fixed port>`, with no way to pass in a listener or
 //! read back an ephemeral port, which races between parallel tests. Its reverse-connect API dials
@@ -14,6 +15,8 @@
 //!   client is connected. `CopyRect` is covered by the decoder's unit tests instead.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, dead_code)]
+
+pub mod stalling;
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 

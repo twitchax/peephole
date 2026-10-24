@@ -29,6 +29,9 @@ pub const INPUT_TOOLS: [&str; 6] = ["click", "move", "drag", "scroll", "type_tex
 
 /// How long a tool waits for a connection before giving up.
 const READY_WAIT: Duration = Duration::from_secs(15);
+/// How long a screenshot after input waits for fresh pixels. A full Retina frame takes about half
+/// a second on a home network.
+const FRESH_WAIT: Duration = Duration::from_secs(5);
 /// How long a button is held for a click, and the pause between the clicks of a double click.
 /// Remote desktops read events as they arrive; with no gap at all, some apps miss the press.
 const CLICK_HOLD: Duration = Duration::from_millis(20);
@@ -262,6 +265,14 @@ impl Peephole {
         let max_edge = params.max_edge.unwrap_or(self.max_edge);
         ensure!(MAX_EDGE_RANGE.contains(&max_edge), "max_edge must be between {} and {}", MAX_EDGE_RANGE.start(), MAX_EDGE_RANGE.end());
         let region = params.region.map(Region::from);
+        let area = {
+            let fb = self.session.framebuffer();
+            match region {
+                Some(region) => self.space(&fb).to_framebuffer_rect(&region)?,
+                None => fb.bounds(),
+            }
+        };
+        let fresh = self.session.freshen(area, FRESH_WAIT).await?;
         let space_edge = self.max_edge;
         let (shot, space, fb_size) = self
             .session
@@ -270,10 +281,11 @@ impl Peephole {
                 render(fb, &space, region, max_edge).map(|shot| (shot, space, (fb.width(), fb.height())))
             })
             .await??;
-        Ok(CallToolResult::success(vec![
-            ContentBlock::image(BASE64.encode(&shot.png), "image/png"),
-            ContentBlock::text(describe(&shot, &space, fb_size)),
-        ]))
+        let mut text = describe(&shot, &space, fb_size);
+        if !fresh {
+            let _ = write!(text, " The server sent no fresh frame within {} s, so this may predate your last input.", FRESH_WAIT.as_secs());
+        }
+        Ok(CallToolResult::success(vec![ContentBlock::image(BASE64.encode(&shot.png), "image/png"), ContentBlock::text(text)]))
     }
 
     fn screen_info_impl(&self) -> CallToolResult {

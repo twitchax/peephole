@@ -68,6 +68,13 @@ password when only a password is set, and no authentication when the server offe
 screenshot *is* screen space, so its pixel coordinates can be clicked directly. A `region`
 screenshot zooms in, up to the framebuffer's own resolution, without changing screen space.
 
+**Fresh pixels after input.** Screenshots normally come from a local copy that the server keeps
+current. macOS Screen Sharing can hold changes back, though: while a menu is open it sends a
+thin band of it about once a second, and the rest only once the menu closes. So after any input,
+the next `screenshot` asks the server for its area outright (about half a second for a full
+Retina frame on a home network), and `wait_for_change` checks a quiet screen against a fresh
+copy before it reports the screen settled.
+
 **Security.** Apple's login and VNC authentication protect the credentials, not the session:
 screen contents and keystrokes cross the network unencrypted, as with any plain VNC client. Use
 peephole on a network you trust, or through a tunnel (SSH, WireGuard).

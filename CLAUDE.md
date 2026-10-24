@@ -17,7 +17,9 @@ aliases; `tests` is the shared fixture factory.
   storage order. Apple's `003.889` is answered as 3.8, as libvncclient does.
 - `session`: one background connection. The reader paints whole updates under the framebuffer
   lock and never holds it across a network read. An `AuthError` stops the session for good:
-  retrying a wrong password could lock the Mac account.
+  retrying a wrong password could lock the Mac account. Apple's incremental stream stalls while
+  a menu is open, so after our input `Session::freshen` and `wait_for_change` request areas
+  non-incrementally; refreshes share the input queue so they go out after the input they follow.
 - `screenshot`: screen space (the framebuffer scaled to `--max-edge`). Every tool coordinate is in
   screen space; a region screenshot zooms without changing it.
 - `mcp`: the rmcp tools. `#[tool_handler(router = self.tool_router)]` is load-bearing: the macro's
@@ -26,7 +28,7 @@ aliases; `tests` is the shared fixture factory.
   output, at trace level.
 - Tests: `tests/rfb.rs` and `tests/e2e.rs` run against rustvncserver through
   `tests/support` (read its header for two upstream bugs that shape coverage); `tests/ard.rs` mocks
-  Apple's type-30 server.
+  Apple's type-30 server, and `tests/support/stalling.rs` mocks its stalled menu updates.
 
 ## Commands
 

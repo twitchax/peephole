@@ -44,6 +44,36 @@ impl Rect {
     pub fn intersects(&self, other: &Rect) -> bool {
         u32::from(self.x) < other.right() && u32::from(other.x) < self.right() && u32::from(self.y) < other.bottom() && u32::from(other.y) < self.bottom()
     }
+
+    /// Whether `rects` together paint every pixel of this rectangle.
+    #[must_use]
+    pub fn is_covered_by(&self, rects: &[Rect]) -> bool {
+        let clipped: Vec<[u32; 4]> = rects
+            .iter()
+            .filter(|r| r.intersects(self))
+            .map(|r| [u32::from(r.x.max(self.x)), u32::from(r.y.max(self.y)), r.right().min(self.right()), r.bottom().min(self.bottom())])
+            .collect();
+        // Cut this rectangle along every rect edge inside it: each cell of the resulting grid then
+        // lies wholly inside or wholly outside each rect, so marking cells is exact.
+        let cuts = |low: u32, high: u32, start: usize, end: usize| {
+            let mut cuts: Vec<u32> = clipped.iter().flat_map(|c| [c[start], c[end]]).chain([low, high]).collect();
+            cuts.sort_unstable();
+            cuts.dedup();
+            cuts
+        };
+        let xs = cuts(u32::from(self.x), self.right(), 0, 2);
+        let ys = cuts(u32::from(self.y), self.bottom(), 1, 3);
+        let columns = xs.len() - 1;
+        let mut covered = vec![false; columns * (ys.len() - 1)];
+        let cell = |cuts: &[u32], edge: u32| cuts.partition_point(|&cut| cut < edge);
+        for c in &clipped {
+            let (left, right) = (cell(&xs, c[0]), cell(&xs, c[2]));
+            for row in cell(&ys, c[1])..cell(&ys, c[3]) {
+                covered[row * columns + left..row * columns + right].fill(true);
+            }
+        }
+        covered.iter().all(|&c| c)
+    }
 }
 
 /// The remote screen as RGB8.
@@ -267,5 +297,23 @@ mod unit {
         assert!(a.intersects(&Rect::new(9, 9, 5, 5)));
         assert!(!a.intersects(&Rect::new(10, 0, 5, 5)));
         assert!(!a.intersects(&Rect::new(0, 10, 5, 5)));
+    }
+
+    #[test]
+    fn coverage_counts_every_pixel() {
+        let area = Rect::new(10, 10, 100, 50);
+        assert!(area.is_covered_by(&[area]));
+        assert!(area.is_covered_by(&[Rect::new(0, 0, 200, 200)]), "a bigger rect");
+        assert!(area.is_covered_by(&[Rect::new(10, 10, 64, 64), Rect::new(74, 10, 64, 64)]), "tiles that overhang the area");
+        assert!(
+            area.is_covered_by(&[Rect::new(10, 10, 60, 50), Rect::new(50, 10, 60, 30), Rect::new(50, 30, 60, 30)]),
+            "overlapping rects"
+        );
+        assert!(Rect::new(5, 5, 0, 0).is_covered_by(&[]), "an empty area");
+
+        assert!(!area.is_covered_by(&[]));
+        assert!(!area.is_covered_by(&[Rect::new(200, 200, 10, 10)]), "a rect elsewhere");
+        assert!(!area.is_covered_by(&[Rect::new(10, 10, 49, 50), Rect::new(60, 10, 50, 50)]), "a one-pixel gap");
+        assert!(!area.is_covered_by(&[Rect::new(10, 10, 100, 25), Rect::new(10, 35, 99, 25)]), "a missing corner pixel");
     }
 }
