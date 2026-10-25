@@ -105,6 +105,7 @@ async fn logs_in_with_apples_login() {
     let seen = mac.await.unwrap().unwrap();
     assert_eq!((seen.username.as_str(), seen.password.as_str()), ("alice", "correct horse"));
     assert_eq!(done.version, Version::V3_8);
+    assert!(done.apple, "003.889 is macOS Screen Sharing");
     assert_eq!(done.security, security::ARD);
     assert_eq!((done.init.width, done.init.height, done.init.name.as_str()), (3456, 2234, "Mac Pro"));
 }

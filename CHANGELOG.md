@@ -22,3 +22,5 @@ why the version moved the way it did.
 - After input, the next `screenshot` fetches its area fresh, and `wait_for_change` confirms a
   settle against fresh pixels: macOS Screen Sharing holds an open menu back from its incremental
   updates.
+- On macOS Screen Sharing, each `scroll` notch sends 16 wheel clicks: Apple's server scrolls
+  about a point per click.

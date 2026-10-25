@@ -65,6 +65,8 @@ pub struct SessionConfig {
 pub struct Desktop {
     pub name: String,
     pub version: Version,
+    /// The server is macOS Screen Sharing.
+    pub apple: bool,
     pub security: u8,
 }
 
@@ -446,6 +448,7 @@ async fn connection(config: &SessionConfig, shared: &Shared, input: &mut Option<
     let desktop = Desktop {
         name: done.init.name,
         version: done.version,
+        apple: done.apple,
         security: done.security,
     };
     let (updated_tx, updated_rx) = mpsc::unbounded_channel();
@@ -548,6 +551,7 @@ mod unit {
         let desktop = Desktop {
             name: "Mac".into(),
             version: Version::V3_8,
+            apple: true,
             security: security::ARD,
         };
         assert_eq!(State::Connected(desktop).to_string(), "connected to \"Mac\" (RFB 3.8, Apple login (30))");

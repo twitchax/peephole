@@ -12,6 +12,8 @@ use crate::credentials::{Credentials, PASSWORD_ENV, USER_ENV};
 
 /// Longest server reason or desktop name we read; anything longer is a broken server.
 const MAX_STRING: u32 = 64 * 1024;
+/// How macOS Screen Sharing greets, and no other server we know of.
+const APPLE_GREETING: &[u8; 12] = b"RFB 003.889\n";
 
 /// The protocol versions we speak. Anything newer, like Apple's `003.889`, is answered as 3.8,
 /// exactly as libvncclient does.
@@ -88,6 +90,8 @@ pub struct ServerInit {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Handshake {
     pub version: Version,
+    /// The server greeted as macOS Screen Sharing does.
+    pub apple: bool,
     pub security: u8,
     pub init: ServerInit,
 }
@@ -110,7 +114,12 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, creden
     // ClientInit: shared, so we never kick another viewer (or the person at the Mac) off.
     stream.write_all(&[1]).await?;
     let init = read_server_init(stream).await.context("reading ServerInit")?;
-    Ok(Handshake { version, security, init })
+    Ok(Handshake {
+        version,
+        apple: &greeting == APPLE_GREETING,
+        security,
+        init,
+    })
 }
 
 /// Reads what the server offers and picks the strongest type our credentials can satisfy.
@@ -304,6 +313,7 @@ mod unit {
         let done = handshake(&mut client, &Credentials::default()).await.unwrap();
         server.await.unwrap();
         assert_eq!(done.version, Version::V3_8);
+        assert!(!done.apple, "only Apple's 003.889 greeting marks macOS");
         assert_eq!(done.security, security::NONE);
         assert_eq!((done.init.width, done.init.height, done.init.name.as_str()), (64, 32, "desk"));
     }

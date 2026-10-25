@@ -12,7 +12,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use peephole::{
     framebuffer::Rect,
     keys::keysym,
-    rfb::proto::buttons::{LEFT, WHEEL_DOWN},
+    mcp::APPLE_WHEEL_CLICKS,
+    rfb::proto::buttons::{LEFT, WHEEL_DOWN, WHEEL_LEFT},
     tests::pattern_rgb,
 };
 use pretty_assertions::assert_eq;
@@ -335,6 +336,20 @@ async fn e2e_wait_for_change_after_input_checks_the_settle_against_fresh_pixels(
     assert_eq!(pixel(&shot, 40, 40), MENU_RGB);
     assert_eq!(pixel(&shot, 70, 4), HIGHLIGHT_RGB);
     assert_eq!(server.fetches().len(), 3);
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn e2e_scroll_on_a_mac_sends_a_line_of_wheel_clicks_per_notch() {
+    let mut server = StallingServer::start(WIDTH, HEIGHT, pattern_rgb(WIDTH, HEIGHT)).await;
+    let app = peephole(server.addr, &[], &[]).await;
+
+    // Apple's server scrolls about a point per wheel click, so each notch is many clicks.
+    app.ok("scroll", json!({"x": 5, "y": 6, "dy": 1, "dx": -1})).await;
+    let clicks = usize::try_from(APPLE_WHEEL_CLICKS).unwrap();
+    let notch = |wheel| [Input::Pointer(5, 6, wheel), Input::Pointer(5, 6, 0)].repeat(clicks);
+    let expected = [vec![Input::Pointer(5, 6, 0)], notch(WHEEL_DOWN), notch(WHEEL_LEFT)].concat();
+    assert_eq!(server.pointer_events(expected.len()).await, expected);
     app.finish().await;
 }
 

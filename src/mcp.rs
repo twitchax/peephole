@@ -43,6 +43,9 @@ const DRAG_STEP: Duration = Duration::from_millis(15);
 const KEY_GAP: Duration = Duration::from_millis(5);
 const MAX_TEXT: usize = 10_000;
 const MAX_SCROLL: u32 = 100;
+/// Wheel clicks per notch for macOS Screen Sharing, which scrolls about a point per click where
+/// other servers scroll a line or more: 16 points is a line of 13-point macOS text.
+pub const APPLE_WHEEL_CLICKS: u32 = 16;
 const DEFAULT_WAIT_MS: u64 = 5_000;
 const MAX_WAIT_MS: u64 = 60_000;
 /// Longer than the session's 100 ms update pacing, so "still" means several quiet updates, and
@@ -225,7 +228,8 @@ impl Peephole {
         reply(self.drag_impl(params).await)
     }
 
-    #[tool(description = "Scroll with the mouse wheel at a point in screen space: dy notches down (negative: up), dx notches right (negative: left).")]
+    #[tool(description = "Scroll with the mouse wheel at a point in screen space: dy notches down (negative: up), dx notches right (negative: left). \
+        A notch scrolls about a line of text, or a few.")]
     async fn scroll(&self, Parameters(params): Parameters<ScrollParams>) -> CallToolResult {
         reply(self.scroll_impl(params).await)
     }
@@ -370,11 +374,12 @@ impl Peephole {
             "scroll at most {MAX_SCROLL} notches at a time"
         );
         let (input, [(x, y)]) = self.targets([Point { x: params.x, y: params.y }]).await?;
+        let clicks = if self.session.ready(READY_WAIT).await?.apple { APPLE_WHEEL_CLICKS } else { 1 };
         input.pointer(x, y, 0).await?;
         let vertical = if params.dy > 0 { buttons::WHEEL_DOWN } else { buttons::WHEEL_UP };
         let horizontal = if params.dx > 0 { buttons::WHEEL_RIGHT } else { buttons::WHEEL_LEFT };
         for (wheel, notches) in [(vertical, params.dy.unsigned_abs()), (horizontal, params.dx.unsigned_abs())] {
-            for _ in 0..notches {
+            for _ in 0..notches * clicks {
                 input.pointer(x, y, wheel).await?;
                 input.pointer(x, y, 0).await?;
             }

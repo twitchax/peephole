@@ -24,11 +24,14 @@ aliases; `tests` is the shared fixture factory.
   screen space; a region screenshot zooms without changing it.
 - `mcp`: the rmcp tools. `#[tool_handler(router = self.tool_router)]` is load-bearing: the macro's
   default rebuilds the router per call and would restore the input tools `--view-only` removed.
+  Apple's server (known by its `003.889` greeting) scrolls about a point per wheel click, so
+  `scroll` sends `APPLE_WHEEL_CLICKS` per notch there.
 - `credentials`: env or file only, `Secret` redacts and zeroizes. Tests assert no password in any
   output, at trace level.
 - Tests: `tests/rfb.rs` and `tests/e2e.rs` run against rustvncserver through
   `tests/support` (read its header for two upstream bugs that shape coverage); `tests/ard.rs` mocks
-  Apple's type-30 server, and `tests/support/stalling.rs` mocks its stalled menu updates.
+  Apple's type-30 server, and `tests/support/stalling.rs` mocks its stalled menu updates
+  and its greeting.
 
 ## Commands
 

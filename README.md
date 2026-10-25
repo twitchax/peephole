@@ -75,6 +75,10 @@ the next `screenshot` asks the server for its area outright (about half a second
 Retina frame on a home network), and `wait_for_change` checks a quiet screen against a fresh
 copy before it reports the screen settled.
 
+**Scrolling a Mac.** macOS Screen Sharing scrolls about one point per wheel click, where other
+servers scroll a line or more. So on a Mac each `scroll` notch sends 16 clicks: about a line of
+text.
+
 **Security.** Apple's login and VNC authentication protect the credentials, not the session:
 screen contents and keystrokes cross the network unencrypted, as with any plain VNC client. Use
 peephole on a network you trust, or through a tunnel (SSH, WireGuard).

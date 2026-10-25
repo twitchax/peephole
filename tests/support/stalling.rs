@@ -1,6 +1,7 @@
 //! A server that holds pixels back the way macOS Screen Sharing does while a menu is open. A
 //! click paints a menu at once, but incremental updates only ever carry a thin highlight, band by
-//! band; the menu arrives only for a non-incremental request.
+//! band; the menu arrives only for a non-incremental request. It greets with Apple's `003.889`, so
+//! peephole takes it for macOS Screen Sharing, and it reports the pointer events it receives.
 
 use std::{
     io,
@@ -13,8 +14,11 @@ use peephole::{framebuffer::Rect, rfb::PixelFormat};
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader},
     net::{TcpListener, TcpStream},
-    time::{Instant, sleep_until},
+    sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+    time::{Instant, sleep_until, timeout},
 };
+
+use super::{Input, WAIT};
 
 /// Painted at the first click, and only ever sent outright.
 pub const MENU: Rect = Rect::new(0, 16, 96, 64);
@@ -28,6 +32,7 @@ const BAND_EVERY: Duration = Duration::from_millis(100);
 pub struct StallingServer {
     pub addr: SocketAddr,
     fetches: Arc<Mutex<Vec<Rect>>>,
+    pointers: UnboundedReceiver<Input>,
 }
 
 impl StallingServer {
@@ -37,18 +42,33 @@ impl StallingServer {
         let addr = listener.local_addr().unwrap();
         let fetches = Arc::new(Mutex::new(Vec::new()));
         let log = fetches.clone();
+        let (pointed, pointers) = unbounded_channel();
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
                 let screen = Screen { width, rgb: rgb.clone() };
-                tokio::spawn(serve(stream, height, screen, log.clone()));
+                tokio::spawn(serve(stream, height, screen, log.clone(), pointed.clone()));
             }
         });
-        Self { addr, fetches }
+        Self { addr, fetches, pointers }
     }
 
     /// Every non-incremental update request answered so far, the first full frame included.
     pub fn fetches(&self) -> Vec<Rect> {
         self.fetches.lock().unwrap().clone()
+    }
+
+    /// The next `n` pointer events, in order.
+    pub async fn pointer_events(&mut self, n: usize) -> Vec<Input> {
+        let deadline = Instant::now() + WAIT;
+        let mut out = Vec::with_capacity(n);
+        while out.len() < n {
+            let event = timeout(deadline.saturating_duration_since(Instant::now()), self.pointers.recv())
+                .await
+                .unwrap_or_else(|_| panic!("timed out with {} of {n} pointer events", out.len()))
+                .expect("pointer channel closed");
+            out.push(event);
+        }
+        out
     }
 }
 
@@ -85,9 +105,9 @@ impl Screen {
     }
 }
 
-async fn serve(stream: TcpStream, height: u16, mut screen: Screen, fetches: Arc<Mutex<Vec<Rect>>>) -> io::Result<()> {
+async fn serve(stream: TcpStream, height: u16, mut screen: Screen, fetches: Arc<Mutex<Vec<Rect>>>, pointed: UnboundedSender<Input>) -> io::Result<()> {
     let mut s = BufReader::new(stream);
-    s.write_all(b"RFB 003.008\n").await?;
+    s.write_all(b"RFB 003.889\n").await?;
     s.read_exact(&mut [0; 12]).await?;
     s.write_all(&[1, 1]).await?; // one security type: None
     s.read_u8().await?;
@@ -126,7 +146,9 @@ async fn serve(stream: TcpStream, height: u16, mut screen: Screen, fetches: Arc<
                 4 => { s.read_exact(&mut [0; 7]).await?; }
                 5 => {
                     let buttons = s.read_u8().await?;
-                    s.read_exact(&mut [0; 4]).await?;
+                    let (x, y) = (s.read_u16().await?, s.read_u16().await?);
+                    // A test that never reads them is fine.
+                    let _ = pointed.send(Input::Pointer(x, y, buttons));
                     if buttons != 0 && !clicked {
                         clicked = true;
                         screen.paint(MENU, MENU_RGB);
