@@ -43,6 +43,9 @@ Credentials come only from `PEEPHOLE_USER`, `PEEPHOLE_PASSWORD` or `--password-f
 arguments, and never appear in logs or tool output. `claude mcp add -e` stores the variable in
 your Claude Code config, so prefer `--password-file` (mode `600`) for a real password.
 
+Add peephole only where sessions should drive the desktop. `claude mcp add` registers it for the
+current directory (local scope); with `-s user`, every Claude Code session starts its own copy.
+
 On the Mac, turn on **System Settings › General › Sharing › Screen Sharing** and allow the user
 you log in as. peephole picks Apple's login when `PEEPHOLE_USER` and a password are set, the VNC
 password when only a password is set, and no authentication when the server offers none.
@@ -78,6 +81,12 @@ copy before it reports the screen settled.
 **Scrolling a Mac.** macOS Screen Sharing scrolls about one point per wheel click, where other
 servers scroll a line or more. So on a Mac each `scroll` notch sends 16 clicks: about a line of
 text.
+
+**Idle.** peephole connects at the first tool call and keeps its copy of the screen current while
+tools are in use. After 30 s without a call it stops asking for updates, since a playing video or
+a screensaver would otherwise stream at ten frames a second. The next call then fetches the whole
+screen first (about half a second for a Retina Mac). After 10 minutes it disconnects, and the
+next call reconnects.
 
 **Security.** Apple's login and VNC authentication protect the credentials, not the session:
 screen contents and keystrokes cross the network unencrypted, as with any plain VNC client. Use

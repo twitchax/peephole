@@ -349,7 +349,7 @@ async fn e2e_scroll_on_a_mac_sends_a_line_of_wheel_clicks_per_notch() {
     let clicks = usize::try_from(APPLE_WHEEL_CLICKS).unwrap();
     let notch = |wheel| [Input::Pointer(5, 6, wheel), Input::Pointer(5, 6, 0)].repeat(clicks);
     let expected = [vec![Input::Pointer(5, 6, 0)], notch(WHEEL_DOWN), notch(WHEEL_LEFT)].concat();
-    assert_eq!(server.pointer_events(expected.len()).await, expected);
+    assert_eq!(server.input_events(expected.len()).await, expected);
     app.finish().await;
 }
 
@@ -368,7 +368,9 @@ async fn e2e_view_only_hides_every_input_tool() {
         .call_tool(CallToolRequestParams::new("click").with_arguments(json!({"x": 1, "y": 1}).as_object().unwrap().clone()))
         .await;
     assert!(refused.is_err() || refused.as_ref().is_ok_and(|r| r.is_error == Some(true)), "{refused:?}");
-    assert!(text(&app.ok("screen_info", json!({})).await).contains("input: disabled"));
+    // The first call connects, even one that only reports.
+    let info = text(&app.ok("screen_info", json!({})).await);
+    assert!(info.contains("state: connected") && info.contains("input: disabled"), "{info}");
     app.finish().await;
 }
 

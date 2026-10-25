@@ -20,6 +20,9 @@ aliases; `tests` is the shared fixture factory.
   retrying a wrong password could lock the Mac account. Apple's incremental stream stalls while
   a menu is open, so after our input `Session::freshen` and `wait_for_change` request areas
   non-incrementally; refreshes share the input queue so they go out after the input they follow.
+  The task dials only once a tool calls `Session::ready`, stops re-arming update requests after
+  `Idle::pause` without one (`ready` then fetches the whole frame first), and disconnects after
+  `Idle::disconnect`.
 - `screenshot`: screen space (the framebuffer scaled to `--max-edge`). Every tool coordinate is in
   screen space; a region screenshot zooms without changing it.
 - `mcp`: the rmcp tools. `#[tool_handler(router = self.tool_router)]` is load-bearing: the macro's
@@ -31,7 +34,8 @@ aliases; `tests` is the shared fixture factory.
 - Tests: `tests/rfb.rs` and `tests/e2e.rs` run against rustvncserver through
   `tests/support` (read its header for two upstream bugs that shape coverage); `tests/ard.rs` mocks
   Apple's type-30 server, and `tests/support/stalling.rs` mocks its stalled menu updates
-  and its greeting.
+  and its greeting. `tests/session.rs` drives the idle behaviour through the library against
+  `tests/support/video.rs`, a screen that never stops changing.
 
 ## Commands
 

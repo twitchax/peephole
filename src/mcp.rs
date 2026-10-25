@@ -204,7 +204,7 @@ impl Peephole {
 
     #[tool(description = "Report the connection state, the framebuffer size, screen space and its scale.")]
     async fn screen_info(&self) -> CallToolResult {
-        self.screen_info_impl()
+        self.screen_info_impl().await
     }
 
     #[tool(description = "Wait until the screen (or a region of it) changes and then settles, instead of polling screenshots. \
@@ -292,7 +292,9 @@ impl Peephole {
         Ok(CallToolResult::success(vec![ContentBlock::image(BASE64.encode(&shot.png), "image/png"), ContentBlock::text(text)]))
     }
 
-    fn screen_info_impl(&self) -> CallToolResult {
+    async fn screen_info_impl(&self) -> CallToolResult {
+        // Connects an idle session. When that fails, the state below says why.
+        let _ = self.session.ready(READY_WAIT).await;
         let state = self.session.state();
         let fb = self.session.framebuffer();
         let space = self.space(&fb);

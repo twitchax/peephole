@@ -15,7 +15,7 @@ use peephole::{
     base::Void,
     credentials::{Credentials, PASSWORD_ENV, USER_ENV},
     mcp, screenshot,
-    session::SessionConfig,
+    session::{Idle, SessionConfig},
 };
 
 /// An MCP server that lets an agent see and drive a remote desktop over VNC, including macOS
@@ -81,6 +81,7 @@ async fn run(cli: Cli) -> Void {
         port: cli.port,
         credentials,
         view_only: cli.view_only,
+        idle: Idle::default(),
     };
     mcp::serve(config, cli.max_edge).await
 }

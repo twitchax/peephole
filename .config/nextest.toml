@@ -22,3 +22,10 @@ retries = 2
 [[profile.default.overrides]]
 filter = 'binary(rfb)'
 test-group = 'serial-e2e'
+
+# The session tests measure idleness in real time: a stream must stop within a few 300 ms pauses.
+# A loaded runner can stretch those windows, so they get the e2e tests' group and retry.
+[[profile.default.overrides]]
+filter = 'binary(session)'
+test-group = 'serial-e2e'
+retries = 2

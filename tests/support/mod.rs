@@ -1,5 +1,6 @@
 //! A real RFB server for wire-level tests: `rustvncserver`, reachable on a loopback port. For
-//! behaviour rustvncserver cannot show (a server that holds pixels back), see [`stalling`].
+//! behaviour rustvncserver cannot show, hand-rolled mocks built on [`mock`]: a server that holds
+//! pixels back ([`stalling`]) and one whose screen never stops changing ([`video`]).
 //!
 //! rustvncserver can only listen on `0.0.0.0:<fixed port>`, with no way to pass in a listener or
 //! read back an ephemeral port, which races between parallel tests. Its reverse-connect API dials
@@ -16,7 +17,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, dead_code)]
 
+pub mod mock;
 pub mod stalling;
+pub mod video;
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
