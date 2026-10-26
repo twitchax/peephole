@@ -25,6 +25,8 @@ Options:
       --password-file <PASSWORD_FILE>  Read the password from this file (trailing newlines ignored) instead of `PEEPHOLE_PASSWORD` [env: PEEPHOLE_PASSWORD_FILE=]
       --view-only                      Disable every input tool, leaving `screenshot`, `screen_info` and `wait_for_change` [env: PEEPHOLE_VIEW_ONLY=]
       --max-edge <MAX_EDGE>            The long edge of screen space (and of a default screenshot), in pixels [env: PEEPHOLE_MAX_EDGE=] [default: 1568]
+      --idle-pause <SECS>              Seconds without a tool call before peephole stops asking for screen updates; the next call fetches the whole screen first [env: PEEPHOLE_IDLE_PAUSE=] [default: 30]
+      --idle-disconnect <SECS>         Seconds without a tool call before peephole disconnects; the next call reconnects [env: PEEPHOLE_IDLE_DISCONNECT=] [default: 600]
   -h, --help                           Print help (see more with '--help')
   -V, --version                        Print version
 ```
@@ -86,7 +88,7 @@ text.
 tools are in use. After 30 s without a call it stops asking for updates, since a playing video or
 a screensaver would otherwise stream at ten frames a second. The next call then fetches the whole
 screen first (about half a second for a Retina Mac). After 10 minutes it disconnects, and the
-next call reconnects.
+next call reconnects. `--idle-pause` and `--idle-disconnect` set the two periods, in seconds.
 
 **Security.** Apple's login and VNC authentication protect the credentials, not the session:
 screen contents and keystrokes cross the network unencrypted, as with any plain VNC client. Use

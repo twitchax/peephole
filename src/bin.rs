@@ -6,7 +6,7 @@
 // feature fails the `unused` lint group on current nightlies.
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
-use std::{io::IsTerminal as _, path::PathBuf, process::ExitCode};
+use std::{io::IsTerminal as _, path::PathBuf, process::ExitCode, time::Duration};
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
@@ -46,6 +46,14 @@ struct Cli {
     /// The long edge of screen space (and of a default screenshot), in pixels.
     #[arg(long, env = "PEEPHOLE_MAX_EDGE", default_value_t = screenshot::DEFAULT_MAX_EDGE, value_parser = clap::value_parser!(u32).range(64..=8192))]
     max_edge: u32,
+
+    /// Seconds without a tool call before peephole stops asking for screen updates; the next call fetches the whole screen first.
+    #[arg(long, env = "PEEPHOLE_IDLE_PAUSE", value_name = "SECS", default_value_t = Idle::default().pause.as_secs(), value_parser = clap::value_parser!(u64).range(1..))]
+    idle_pause: u64,
+
+    /// Seconds without a tool call before peephole disconnects; the next call reconnects.
+    #[arg(long, env = "PEEPHOLE_IDLE_DISCONNECT", value_name = "SECS", default_value_t = Idle::default().disconnect.as_secs(), value_parser = clap::value_parser!(u64).range(1..))]
+    idle_disconnect: u64,
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -81,7 +89,10 @@ async fn run(cli: Cli) -> Void {
         port: cli.port,
         credentials,
         view_only: cli.view_only,
-        idle: Idle::default(),
+        idle: Idle {
+            pause: Duration::from_secs(cli.idle_pause),
+            disconnect: Duration::from_secs(cli.idle_disconnect),
+        },
     };
     mcp::serve(config, cli.max_edge).await
 }

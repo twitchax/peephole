@@ -27,12 +27,13 @@ use serde_json::{Value, json};
 use support::{
     Input, TestServer, WAIT,
     stalling::{HIGHLIGHT_RGB, MENU_RGB, StallingServer},
+    video::VideoServer,
 };
 use tempfile::TempDir;
 use tokio::{
     io::{AsyncReadExt as _, BufReader},
     process::{ChildStderr, Command},
-    time::timeout,
+    time::{sleep, timeout},
 };
 
 const WIDTH: u16 = 320;
@@ -59,6 +60,8 @@ async fn peephole(addr: SocketAddr, args: &[&str], env: &[(&str, &str)]) -> Peep
         "PEEPHOLE_PASSWORD_FILE",
         "PEEPHOLE_VIEW_ONLY",
         "PEEPHOLE_MAX_EDGE",
+        "PEEPHOLE_IDLE_PAUSE",
+        "PEEPHOLE_IDLE_DISCONNECT",
         "RUST_LOG",
     ] {
         cmd.env_remove(name);
@@ -350,6 +353,21 @@ async fn e2e_scroll_on_a_mac_sends_a_line_of_wheel_clicks_per_notch() {
     let notch = |wheel| [Input::Pointer(5, 6, wheel), Input::Pointer(5, 6, 0)].repeat(clicks);
     let expected = [vec![Input::Pointer(5, 6, 0)], notch(WHEEL_DOWN), notch(WHEEL_LEFT)].concat();
     assert_eq!(server.input_events(expected.len()).await, expected);
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn e2e_the_idle_flags_set_when_the_stream_pauses_and_the_session_disconnects() {
+    let server = VideoServer::start(WIDTH, HEIGHT).await;
+    let app = peephole(server.addr, &["--idle-pause", "1", "--idle-disconnect", "3"], &[]).await;
+
+    app.ok("screen_info", json!({})).await;
+    // Past the pause and short of the disconnect, so the stream has stopped and the connection
+    // is still open.
+    sleep(Duration::from_secs(2)).await;
+    let paused = server.requests().len();
+    server.closed().await;
+    assert_eq!(server.requests().len(), paused, "the stream ran past --idle-pause");
     app.finish().await;
 }
 

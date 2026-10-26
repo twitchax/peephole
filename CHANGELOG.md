@@ -25,5 +25,5 @@ why the version moved the way it did.
 - On macOS Screen Sharing, each `scroll` notch sends 16 wheel clicks: Apple's server scrolls
   about a point per click.
 - peephole connects at the first tool call, stops asking for screen updates after 30 s without
-  one, and disconnects after 10 minutes. Before, an idle session streamed for as long as it ran
-  (a screensaver cost 13 MB/s).
+  one, and disconnects after 10 minutes (`--idle-pause` and `--idle-disconnect` set both). Before,
+  an idle session streamed for as long as it ran (a screensaver cost 13 MB/s).

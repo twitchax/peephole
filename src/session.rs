@@ -521,10 +521,11 @@ async fn until_idle(activity: &watch::Sender<Activity>, period: Duration) {
         if current.idle_for(period) {
             return;
         }
-        // A busy tool says when it finishes; otherwise look again when the period would be up.
-        match current.used.filter(|_| current.busy == 0) {
-            Some(used) => {
-                let _ = timeout_at(used + period, seen.changed()).await;
+        // A busy tool says when it finishes; otherwise look again when the period would be up. A
+        // period past what the clock can hold never ends.
+        match current.used.filter(|_| current.busy == 0).and_then(|used| used.checked_add(period)) {
+            Some(up) => {
+                let _ = timeout_at(up, seen.changed()).await;
             }
             None => {
                 let _ = seen.changed().await;

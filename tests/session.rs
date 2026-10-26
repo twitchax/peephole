@@ -104,6 +104,25 @@ async fn a_long_wait_keeps_the_stream_going() {
 }
 
 #[tokio::test]
+async fn idle_periods_too_long_for_the_clock_never_end() {
+    let server = VideoServer::start(WIDTH, HEIGHT).await;
+    let session = session(
+        server.addr,
+        false,
+        Idle {
+            pause: Duration::MAX,
+            disconnect: Duration::MAX,
+        },
+    );
+
+    session.ready(WAIT).await.unwrap();
+    let asked = server.requests().len();
+    server.wait_for_requests(asked + 3).await;
+    assert_eq!(server.connections(), 1);
+    assert!(matches!(session.state(), State::Connected(_)), "{}", session.state());
+}
+
+#[tokio::test]
 async fn lets_go_of_the_server_after_a_longer_idle_and_reconnects_for_the_next_tool() {
     let server = VideoServer::start(WIDTH, HEIGHT).await;
     let session = session(server.addr, false, Idle { pause: PAUSE, disconnect: PAUSE * 2 });
