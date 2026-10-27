@@ -73,12 +73,12 @@ password when only a password is set, and no authentication when the server offe
 screenshot *is* screen space, so its pixel coordinates can be clicked directly. A `region`
 screenshot zooms in, up to the framebuffer's own resolution, without changing screen space.
 
-**Fresh pixels after input.** Screenshots normally come from a local copy that the server keeps
-current. macOS Screen Sharing can hold changes back, though: while a menu is open it sends a
-thin band of it about once a second, and the rest only once the menu closes. So after any input,
-the next `screenshot` asks the server for its area outright (about half a second for a full
-Retina frame on a home network), and `wait_for_change` checks a quiet screen against a fresh
-copy before it reports the screen settled.
+**Fresh pixels after input.** Screenshots normally come from peephole's local copy of the screen,
+which the VNC server keeps current. macOS Screen Sharing can hold changes back, though: while a
+menu is open, it sends a thin band of the menu about once a second, and the rest when the menu
+closes. So after any input, the next `screenshot` asks the VNC server for its area outright (about
+half a second for a full Retina frame on a home network), and `wait_for_change` checks a quiet
+screen against a fresh copy before reporting it settled.
 
 **Scrolling a Mac.** macOS Screen Sharing scrolls about one point per wheel click, where other
 servers scroll a line or more. So on a Mac each `scroll` notch sends 16 clicks: about a line of

@@ -7,6 +7,10 @@ why the version moved the way it did.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-27
+
+The first release, so everything below is new.
+
 ### Added
 
 - A stdio MCP server with `screenshot`, `click`, `move`, `drag`, `scroll`, `type_text`, `key`,

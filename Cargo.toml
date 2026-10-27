@@ -13,8 +13,8 @@ description = "An MCP server that lets an agent see and drive a remote desktop o
 license = "MIT"
 repository = "https://github.com/twitchax/peephole"
 readme = "README.md"
-keywords = []
-categories = []
+keywords = ["mcp", "vnc", "rfb", "macos", "remote-desktop"]
+categories = ["command-line-utilities", "network-programming"]
 
 [[bin]]
 name = "peephole"
